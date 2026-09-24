@@ -2,7 +2,7 @@
   "name": "whatcaniclaim",
   "version": "0.1.0",
   "private": true,
-  "description": "WhatCanIClaim? - UK entitlement checker MVP (Nottinghamshire pilot)",
+  "description": "WhatCanIClaim? - entitlement checker for England",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

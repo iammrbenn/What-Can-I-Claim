@@ -1,5 +1,5 @@
 /*
- * WhatCanIClaim? - eligibility screening rules (MVP, England / Nottinghamshire pilot)
+ * WhatCanIClaim? - eligibility screening rules (England)
  *
  * Shared by the browser (window.WCIRules) and Node (require('./rules')).
  * This is a SCREENING engine, not a benefits calculator. It sorts schemes into
@@ -40,7 +40,7 @@
       couple: 666.97,
       childApprox: 300, // SCREENING APPROXIMATION ONLY - not a published rate
       carerApprox: 205, // SCREENING APPROXIMATION ONLY
-      housingCapPrivateApprox: 750, // crude proxy for Nottingham LHA - screening only
+      housingCapPrivateApprox: 800, // default crude LHA proxy - see LHA_BY_REGION
       workAllowanceHigher: 710,
       workAllowanceLower: 427,
       taper: 0.55,
@@ -61,6 +61,52 @@
     bigDifference: { incomeLimit: 24454, upTo: 411 }, // Severn Trent
     crfCountyIncomeLimit: 35000 // Nottinghamshire County Crisis and Resilience Fund
   };
+
+  // Crude 2-bed Local Housing Allowance proxies (monthly) by region - SCREENING ONLY.
+  // Only used to decide likely/possible for Universal Credit; never shown to users.
+  var LHA_BY_REGION = {
+    'London': 1650,
+    'South East': 1050,
+    'East of England': 925,
+    'South West': 875,
+    'West Midlands': 725,
+    'East Midlands': 700,
+    'North West': 675,
+    'Yorkshire and The Humber': 650,
+    'North East': 575
+  };
+  var REGIONS = Object.keys(LHA_BY_REGION);
+
+  // Water companies in England: [id, label, url]. Every company runs a social tariff.
+  var WATER_COMPANIES = [
+    ['anglian', 'Anglian Water', 'https://www.anglianwater.co.uk/'],
+    ['affinity', 'Affinity Water', 'https://www.affinitywater.co.uk/'],
+    ['essexsuffolk', 'Essex & Suffolk Water', 'https://www.eswater.co.uk/'],
+    ['northumbrian', 'Northumbrian Water', 'https://www.nwl.co.uk/'],
+    ['severn', 'Severn Trent', 'https://www.stwater.co.uk/'],
+    ['southern', 'Southern Water', 'https://www.southernwater.co.uk/'],
+    ['southwest', 'South West Water', 'https://www.southwestwater.co.uk/'],
+    ['thames', 'Thames Water', 'https://www.thameswater.co.uk/'],
+    ['united', 'United Utilities', 'https://www.unitedutilities.com/'],
+    ['wessex', 'Wessex Water', 'https://www.wessexwater.co.uk/'],
+    ['yorkshire', 'Yorkshire Water', 'https://www.yorkshirewater.com/'],
+    ['otherwater', 'Another water company', 'https://www.ccw.org.uk/save-money-and-water/help-with-bills/']
+  ];
+  var CCW_HELP = 'https://www.ccw.org.uk/save-money-and-water/help-with-bills/';
+
+  // Council-specific deep links, keyed by the council that runs the scheme.
+  // Add councils here as you pilot them; everywhere else gets the GOV.UK council finder.
+  var LOCAL_OVERRIDES = {
+    'Nottingham': {
+      crf: { applyUrl: 'https://www.nottinghamcity.gov.uk/information-for-residents/benefits/crisis-and-resilience-fund/i-need-help-now/', sourceUrl: 'https://www.nottinghamcity.gov.uk/information-for-residents/benefits/crisis-and-resilience-fund/' },
+      energy: { applyUrl: 'https://www.nottenergy.com/', note: 'Nottingham Energy Partnership gives free local energy advice.' }
+    },
+    'Nottinghamshire': {
+      crf: { applyUrl: 'https://www.nottinghamshire.gov.uk/business-community/cost-of-living-support/crisis-and-resilience-fund/apply-for-emergency-support', sourceUrl: 'https://www.nottinghamshire.gov.uk/business-community/cost-of-living-support/crf', note: 'Nottinghamshire County: household income must be under ' + GBP + '35,000 and you need two months of bank statements.' },
+      energy: { applyUrl: 'https://www.nottenergy.com/', note: 'Nottingham Energy Partnership gives free local energy advice.' }
+    }
+  };
+  var FIND_COUNCIL = 'https://www.gov.uk/find-local-council';
 
   var NOTTS_DISTRICTS = [
     'Nottingham',
@@ -96,7 +142,7 @@
     ['healthystart', 'Healthy Start card'],
     ['nhscert', 'NHS exemption or HC2/HC3 certificate'],
     ['socialtariff', 'Broadband or mobile social tariff'],
-    ['bigdiff', 'Water bill discount (e.g. Big Difference)'],
+    ['bigdiff', 'Water bill discount or social tariff'],
     ['psr', 'Priority Services Register'],
     ['buspass', 'Free bus pass'],
     ['railcard', 'Railcard'],
@@ -135,8 +181,18 @@
   function healthAny(p) { return healthList(p).length > 0; }
   function adultHealth(p) { return healthList(p).indexOf('you') !== -1 || healthList(p).indexOf('partner') !== -1; }
   function childHealth(p) { return healthList(p).indexOf('child') !== -1 || p.childDisabled === 'yes'; }
-  function inNotts(p) { return NOTTS_DISTRICTS.indexOf(p.district) !== -1; }
-  function isCity(p) { return p.district === 'Nottingham'; }
+  function inEngland(p) { return !p.country || p.country === 'England'; }
+  function upperTier(p) { return p.county || p.district || ''; } // county or unitary council
+  function councilName(p) { return p.district || ''; } // Council Tax billing authority
+  function local(p, key) {
+    var o = LOCAL_OVERRIDES[upperTier(p)] || LOCAL_OVERRIDES[councilName(p)];
+    return o && o[key] ? o[key] : null;
+  }
+  function lhaCap(p) { return LHA_BY_REGION[p.region] || C.uc.housingCapPrivateApprox; }
+  function waterCo(p) {
+    for (var i = 0; i < WATER_COMPANIES.length; i++) if (WATER_COMPANIES[i][0] === p.water) return WATER_COMPANIES[i];
+    return null;
+  }
   function caring35(p) { return p.caring === '35plus'; }
   function caring20(p) { return p.caring === '20to34' || p.caring === '35plus'; }
   function allAdultsWorking(p) {
@@ -160,7 +216,7 @@
     var children = kidsWhere(p, function (a) { return a <= 19; }).length;
     var housing = 0;
     if (p.housing === 'social') housing = n(p.rent);
-    if (p.housing === 'private') housing = Math.min(n(p.rent), U.housingCapPrivateApprox);
+    if (p.housing === 'private') housing = Math.min(n(p.rent), lhaCap(p));
     var carer = caring35(p) && p.caredBenefit !== 'no' ? U.carerApprox : 0;
     var max = std + children * U.childApprox + housing + carer;
     var wa = 0;
@@ -598,7 +654,7 @@
     check: function (p, ctx) {
       if (!liable(p) || has(p, 'ctr')) return null;
       var why = [];
-      if (p.district && inNotts(p)) why.push('Your council (' + p.district + ') runs its own scheme.');
+      if (councilName(p)) why.push('Your council (' + councilName(p) + ') runs its own scheme, so the rules vary.');
       if (has(p, 'pc')) return { tier: 'likely', why: ['Pension Credit guarantee credit usually means no Council Tax to pay.'].concat(why) };
       if (onMeansTested(p)) return { tier: 'likely', why: ['You get a means-tested benefit, which usually qualifies you.'].concat(why) };
       if (p.savings === 'over16') return null;
@@ -669,34 +725,54 @@
     how: 'Apply online to Severn Trent. You need to reapply every year.',
     applyUrl: 'https://www.stwater.co.uk/help-and-contact/help-with-paying-your-bill/big-difference-scheme/',
     sourceUrl: 'https://www.stwater.co.uk/help-and-contact/help-with-paying-your-bill/big-difference-scheme/',
-    reviewed: '2026-09-22',
+    reviewed: '2026-09-24',
     check: function (p) {
-      if (!liable(p) || has(p, 'bigdiff')) return null;
-      if (!(p.water === 'severn' || (p.water === 'unsure' && inNotts(p)))) return null;
+      if (!liable(p) || has(p, 'bigdiff') || p.water !== 'severn') return null;
       var annual = householdNetMonthly(p) * 12;
-      var why = [];
-      if (p.water === 'unsure') why.push('Severn Trent supplies most of Nottinghamshire - check your water bill.');
-      if (annual < C.bigDifference.incomeLimit) return { tier: 'possible', why: ['Your household income looks under ' + money(C.bigDifference.incomeLimit) + ' a year.'].concat(why) };
-      if (kids(p).length && annual < C.bigDifference.incomeLimit + kids(p).length * 3000) return { tier: 'check', why: ['Households with children get a higher income allowance.'].concat(why) };
+      if (annual < C.bigDifference.incomeLimit) return { tier: 'possible', why: ['Your household income looks under ' + money(C.bigDifference.incomeLimit) + ' a year.'] };
+      if (kids(p).length && annual < C.bigDifference.incomeLimit + kids(p).length * 3000) return { tier: 'check', why: ['Households with children get a higher income allowance.'] };
       return null;
     }
   });
 
   scheme({
-    id: 'watersure', holds: null, name: 'WaterSure Plus / other water bill help', category: 'Energy & water',
+    id: 'watertariff', holds: 'bigdiff', name: 'Water bill social tariff', category: 'Energy & water',
+    valueLabel: 'Often 25% to 90% off your water bill',
+    evidence: ['Water account number', 'Proof of household income or benefits'],
+    how: 'Every water company in England has a scheme for low-income households, and the rules differ by company. Search "social tariff" or "help paying your bill" on your water company\'s website, or use the Consumer Council for Water\'s list.',
+    applyUrl: CCW_HELP,
+    sourceUrl: CCW_HELP,
+    reviewed: '2026-09-24',
+    check: function (p) {
+      if (!liable(p) || has(p, 'bigdiff') || p.water === 'severn') return null;
+      var co = waterCo(p);
+      var why = [];
+      var out = null;
+      if (onMeansTested(p)) out = 'possible';
+      else if (householdNetMonthly(p) * 12 < 21000 + kids(p).length * 3000) out = 'check';
+      if (!out) return null;
+      why.push(out === 'possible' ? 'You get a means-tested benefit, which qualifies you for most water social tariffs.' : 'Your household income may be low enough for your water company\'s scheme.');
+      if (co && co[0] !== 'otherwater') why.push('Your supplier is ' + co[1] + '.');
+      else why.push('Your water company is named on your water bill.');
+      return { tier: out, why: why, applyUrl: co && co[0] !== 'otherwater' ? co[2] : CCW_HELP };
+    }
+  });
+
+  scheme({
+    id: 'watersure', holds: null, name: 'WaterSure Plus / WaterSure', category: 'Energy & water',
     valueLabel: 'Caps a metered water bill',
     evidence: ['Water account number', 'Proof of benefit', 'Medical evidence if a condition needs extra water'],
-    how: 'Ask your water company. You need a water meter (or to have applied for one) and a means-tested benefit, plus 3+ children or a medical condition that uses extra water.',
-    applyUrl: 'https://www.stwater.co.uk/help-and-contact/help-with-paying-your-bill/',
-    sourceUrl: 'https://www.ofwat.gov.uk/',
-    reviewed: '2026-09-22',
+    how: 'Ask your water company. You need a water meter (or to have applied for one) and a means-tested benefit, plus 3 or more children or a medical condition that uses extra water.',
+    applyUrl: CCW_HELP,
+    sourceUrl: CCW_HELP,
+    reviewed: '2026-09-24',
     check: function (p) {
       if (!liable(p) || !onMeansTested(p)) return null;
       var many = kidsWhere(p, function (a) { return a < 19; }).length >= 3;
       if (!many && !healthAny(p)) return null;
+      var co = waterCo(p);
       var why = [many ? 'You have 3 or more children and get a means-tested benefit.' : 'Someone has a health condition and you get a means-tested benefit.'];
-      if (p.water === 'anglian') why.push('Anglian Water runs its own WaterSure and social tariff - apply to them.');
-      return { tier: 'check', why: why };
+      return { tier: 'check', why: why, applyUrl: co && co[0] !== 'otherwater' ? co[2] : CCW_HELP };
     }
   });
 
@@ -740,14 +816,17 @@
     id: 'energygrant', holds: null, name: 'Energy debt and efficiency help', category: 'Energy & water',
     valueLabel: 'Grants to clear energy debt; free home energy improvements',
     evidence: ['Recent energy bills', 'Income and outgoings'],
-    how: 'Nottingham Energy Partnership gives free local advice. The British Gas Energy Trust offers help to people with any supplier, usually through an adviser.',
-    applyUrl: 'https://www.nottenergy.com/',
+    how: 'Simple Energy Advice (the government service) shows free insulation and heating grants for your area, including Warm Homes grants. The British Gas Energy Trust helps people with energy debt whatever their supplier, usually through an adviser.',
+    applyUrl: 'https://www.simpleenergyadvice.org.uk/',
     sourceUrl: 'https://www.britishgasenergytrust.org.uk/',
-    reviewed: '2026-09-22',
+    reviewed: '2026-09-24',
     check: function (p, ctx) {
       if (p.housing === 'family') return null;
       if (!(onMeansTested(p) || gate(p, ctx) || (p.savings === 'under6' && householdNetMonthly(p) < 1800))) return null;
-      return { tier: 'check', why: ['Your income suggests you could get help with energy debt or free insulation and heating upgrades.'] };
+      var why = ['Your income suggests you could get help with energy debt or free insulation and heating upgrades.'];
+      var o = local(p, 'energy');
+      if (o) why.push(o.note);
+      return { tier: 'check', why: why, applyUrl: o ? o.applyUrl : null };
     }
   });
 
@@ -756,7 +835,7 @@
     id: 'buspass', holds: 'buspass', name: 'Free bus pass', category: 'Travel',
     valueLabel: 'Free off-peak local bus travel across England',
     evidence: ['Proof of age or disability', 'Proof of address', 'A passport-style photo'],
-    how: isCityNote(),
+    how: 'Apply to your council. Some councils add extras, such as a companion pass or travel before 9:30am.',
     applyUrl: 'https://www.gov.uk/apply-for-elderly-person-bus-pass',
     sourceUrl: 'https://www.gov.uk/apply-for-elderly-person-bus-pass',
     reviewed: '2026-09-22',
@@ -769,9 +848,6 @@
       return null;
     }
   });
-  function isCityNote() {
-    return 'Apply to your council: Nottingham City Council if you live in the city, Nottinghamshire County Council if you live in the county. In Nottingham, some passes also cover trams.';
-  }
 
   scheme({
     id: 'bluebadge', holds: 'bluebadge', name: 'Blue Badge', category: 'Travel',
@@ -848,35 +924,36 @@
   // ---------------- Local and grants ----------------
   scheme({
     id: 'crf', holds: null, name: 'Emergency help from your council (Crisis and Resilience Fund)', category: 'Local & grants',
-    valueLabel: 'One-off help with food, energy, clothing or essential appliances in a crisis',
-    evidence: ['Proof of identity and address', 'Two months of bank statements (county)'],
-    how: 'Only for an immediate financial crisis. The fund is run separately by Nottingham City Council and Nottinghamshire County Council.',
-    applyUrl: 'https://www.nottinghamshire.gov.uk/business-community/cost-of-living-support/crisis-and-resilience-fund/apply-for-emergency-support',
-    sourceUrl: 'https://www.nottinghamshire.gov.uk/business-community/cost-of-living-support/crf',
-    reviewed: '2026-09-22',
-    check: function (p) {
-      if (!inNotts(p)) return null;
-      if (isCity(p)) {
-        if (!onMeansTested(p) && householdNetMonthly(p) > 2500) return null;
-        return { tier: 'check', why: ['You live in Nottingham City. If you are in an emergency, the council can help with crisis payments and advice.'], applyUrl: 'https://www.nottinghamcity.gov.uk/information-for-residents/benefits/crisis-and-resilience-fund/i-need-help-now/', sourceUrl: 'https://www.nottinghamcity.gov.uk/information-for-residents/benefits/crisis-and-resilience-fund/' };
-      }
-      if (householdNetMonthly(p) * 12 >= C.crfCountyIncomeLimit) return null;
-      return { tier: 'check', why: ['You live in Nottinghamshire with household income under ' + money(C.crfCountyIncomeLimit) + '.', 'Only if you have had a financial crisis in the last month. Up to 2 applications a year.'] };
+    valueLabel: 'One-off help with food, energy, clothing, furniture or essential appliances in a crisis',
+    evidence: ['Proof of identity and address', 'Recent bank statements', 'Details of the emergency'],
+    how: 'Every county and unitary council in England runs a Crisis and Resilience Fund from April 2026, replacing the Household Support Fund. Rules differ by council. Find your council and search "Crisis and Resilience Fund". It is for emergencies, not day-to-day bills.',
+    applyUrl: FIND_COUNCIL,
+    sourceUrl: 'https://www.gov.uk/government/publications/crisis-and-resilience-fund-guidance-for-local-authorities-in-england-1-april-2026-to-31-march-2029',
+    reviewed: '2026-09-24',
+    check: function (p, ctx) {
+      if (!inEngland(p)) return null;
+      if (!(onMeansTested(p) || gate(p, ctx) || householdNetMonthly(p) < 2500)) return null;
+      var why = [];
+      if (upperTier(p)) why.push('Your fund is run by ' + upperTier(p) + (p.county ? ' County Council' : ' council') + '.');
+      why.push('Only if you have had a financial emergency, such as a sudden loss of income or a broken cooker or fridge.');
+      var o = local(p, 'crf');
+      if (o && o.note) why.push(o.note);
+      return { tier: 'check', why: why, applyUrl: o ? o.applyUrl : null, sourceUrl: o ? o.sourceUrl : null };
     }
   });
 
   scheme({
-    id: 'dhp', holds: null, name: 'Discretionary Housing Payment', category: 'Local & grants',
-    valueLabel: 'Help to cover a rent shortfall',
+    id: 'dhp', holds: null, name: 'Housing Payment (help with a rent shortfall)', category: 'Local & grants',
+    valueLabel: 'Help to cover a gap between your rent and your housing benefit',
     evidence: ['Tenancy agreement', 'Benefit award showing housing help', 'Income and spending details'],
-    how: 'Apply to your district or city council if your housing help does not cover your rent.',
-    applyUrl: 'https://www.gov.uk/find-local-council',
-    sourceUrl: 'https://www.gov.uk/government/collections/discretionary-housing-payments-guidance',
-    reviewed: '2026-09-22',
+    how: 'From April 2026, Discretionary Housing Payments are being replaced by Housing Payments under the Crisis and Resilience Fund. Apply to the council that pays your Housing Benefit or deals with your Council Tax. In two-tier areas this is still usually your district council until 2028.',
+    applyUrl: FIND_COUNCIL,
+    sourceUrl: 'https://www.gov.uk/government/publications/crisis-and-resilience-fund-guidance-for-local-authorities-in-england-1-april-2026-to-31-march-2029',
+    reviewed: '2026-09-24',
     check: function (p) {
       if (!renting(p) || !(has(p, 'uc') || has(p, 'hb'))) return null;
-      if (p.housing === 'private' && n(p.rent) > C.uc.housingCapPrivateApprox) {
-        return { tier: 'possible', why: ['You rent privately and your rent may be higher than the housing help you get.'] };
+      if (p.housing === 'private' && n(p.rent) > lhaCap(p)) {
+        return { tier: 'possible', why: ['You rent privately and your rent looks higher than the usual housing help in your area.'] };
       }
       return { tier: 'check', why: ['If your benefit does not cover your full rent, the council may top it up.'] };
     }
@@ -946,7 +1023,8 @@
         why: out.why || [],
         value: typeof out.value === 'number' && out.value > 0 ? Math.round(out.value) : null,
         applyUrl: out.applyUrl || s.applyUrl,
-        sourceUrl: out.sourceUrl || s.sourceUrl
+        sourceUrl: out.sourceUrl || s.sourceUrl,
+        how: out.how || s.how
       }));
     });
     results.sort(function (a, b) {
@@ -968,7 +1046,8 @@
         receiving: receiving.length,
         likelyValue: sum(likely),
         possibleValue: sum(possible),
-        inNotts: inNotts(p)
+        inEngland: inEngland(p),
+        council: councilName(p)
       },
       ctx: { ucTier: ctx.ucTier, pcTier: ctx.pcTier }
     };
@@ -977,6 +1056,9 @@
   return {
     RATES: C,
     NOTTS_DISTRICTS: NOTTS_DISTRICTS,
+    REGIONS: REGIONS,
+    WATER_COMPANIES: WATER_COMPANIES,
+    LOCAL_OVERRIDES: LOCAL_OVERRIDES,
     RECEIVING_BENEFITS: RECEIVING_BENEFITS,
     RECEIVING_OTHER: RECEIVING_OTHER,
     SCHEME_IDS: S.map(function (s) { return s.id; }),

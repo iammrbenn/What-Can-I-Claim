@@ -1,4 +1,4 @@
-# WhatCanIClaim? - MVP (Nottinghamshire pilot)
+# WhatCanIClaim? - MVP (England)
 
 A mobile web app with a **one-off paid unlock**. It screens a household for benefits, discounts, grants and local support it may be missing, links each result to the official source, and tracks claims in an Entitlement Wallet. Partner organisations get an anonymised dashboard.
 
@@ -6,11 +6,24 @@ A mobile web app with a **one-off paid unlock**. It screens a household for bene
 
 | File | What it does |
 |---|---|
-| `rules.js` | The rules engine, covering 36 schemes. It holds every rate and threshold and runs in both the browser and Node. **This is the file you maintain.** |
+| `rules.js` | The rules engine, covering 37 schemes, for all of England. It holds every rate and threshold and runs in both the browser and Node. **This is the file you maintain.** |
 | `server.js` | Express server with static hosting, anonymous event collection and the partner dashboard |
 | `public/index.html`, `app.js`, `styles.css` | The app: branching questions, then results, then the wallet |
 | `public/privacy.html`, `public/terms.html` | Privacy notice and terms. **Fill in the [OPERATOR] placeholders before you take payments.** |
-| `test/` | 17 tests: rules personas, the server, and payments with a fake Stripe (`npm test`) |
+| `test/` | 21 tests: rules personas, the server, and payments with a fake Stripe (`npm test`) |
+
+## Coverage: all of England
+
+- **Postcode lookup:** the postcode finds the user's council, county (in two-tier areas) and region through postcodes.io. If the lookup fails, the user picks their country and region instead.
+- **Outside England:** Scotland, Wales and Northern Ireland get a polite "England only for now" screen, which points to Turn2us and Citizens Advice. They are never shown the paywall.
+- **Council-run schemes:**
+  - Council Tax Reduction and the single person discount name the user's council.
+  - The Crisis and Resilience Fund (which replaced the Household Support Fund in April 2026) names the county or unitary council that runs it.
+  - Housing Payments (which are replacing Discretionary Housing Payments) are covered too.
+  - All of these link to the GOV.UK council finder.
+- **Rent screen:** the rough Universal Credit check uses a regional rent cap (`LHA_BY_REGION` in `rules.js`), so a London renter isn't screened like one in the North East.
+- **Water:** the user picks from all 11 major English water companies. The result links to that company's website, or to the Consumer Council for Water list if they're not sure. Severn Trent customers still get the specific Big Difference scheme.
+- **Adding council deep links:** add the council to `LOCAL_OVERRIDES` in `rules.js`. Nottingham City and Nottinghamshire County are already in there as examples. Do this for each partner you sign.
 
 ## How the one-off fee works
 
@@ -62,7 +75,7 @@ npm test
 4. Set these variables:
    - `DATA_DIR=/data`
    - `ADMIN_KEY=<long random string>`: sign in to `/dashboard` as user `admin`
-   - `ORG_KEYS={"nch":"<password>","ncu":"<password>"}`: one login per pilot partner. The username is the org code.
+   - `ORG_KEYS={"acme-ha":"<password>"}`: one login per pilot partner. The username is the org code.
 5. Generate a domain under Settings, then Networking.
 
 ## Pilot partner links
@@ -92,7 +105,7 @@ They can also download a CSV.
   - Warm Home Discount qualifying date (set each summer)
   - Healthy Start values
   - Big Difference income limit
-  - Crisis and Resilience Fund rules for both City and County
+  - the council links in `LOCAL_OVERRIDES`
   - state pension age, which is moving from 66 to 67 between 2026 and 2028
 
 ## Known MVP limits
